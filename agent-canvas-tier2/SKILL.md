@@ -1,6 +1,8 @@
 ---
 name: agent-canvas-tier2
 description: Create a Tier 2 worktree environment inside AgentCanvas with automatic metadata registration. The worktree URL, path, and database are linked to the terminal tile so the agent-canvas-agent-browser skill can auto-discover it. Use when running inside an AgentCanvas terminal and starting work that involves database migrations, data modifications, or any code changes that should be isolated from the main branch.
+model: haiku
+allowed-tools: Bash, Read, AskUserQuestion
 ---
 
 # AgentCanvas Tier 2 Worktree Setup
@@ -21,7 +23,7 @@ Both must be set. If not, fall back to the standard `/tier2` skill.
 ## When This Skill Is Invoked
 
 1. **Ask for the feature/branch name** if not provided as an argument
-2. **Create the worktree** using the project's `bin/worktree` script
+2. **Create the worktree** using the project's `~/.claude/scripts/worktree` script
 3. **Register worktree metadata** on the terminal tile via the Canvas API
 4. **Confirm the environment is ready** and offer to open the browser tile
 5. **Change working context** to the new worktree directory
@@ -38,13 +40,13 @@ If the user provided a branch name as an argument, use it. Otherwise, ask:
 Run the worktree creation command:
 
 ```bash
-bin/worktree create <branch-name>
+~/.claude/scripts/worktree create <branch-name>
 ```
 
 If the user wants to branch from a specific base branch (not main), use:
 
 ```bash
-bin/worktree create <branch-name> --from <base-branch>
+~/.claude/scripts/worktree create <branch-name> --from <base-branch>
 ```
 
 ### Step 3: Get Worktree Info
@@ -52,7 +54,7 @@ bin/worktree create <branch-name> --from <base-branch>
 After creation, run:
 
 ```bash
-bin/worktree info <branch-name>
+~/.claude/scripts/worktree info <branch-name>
 ```
 
 Parse the output for:
@@ -142,5 +144,5 @@ This means after running this skill, the user can simply say "open the browser" 
 - The original `/tier2` skill remains unchanged for non-canvas terminals
 - The database is seeded from `storage/app/database-dumps/copy-of-database.sql`
 - Test account: `dfieldmark69@gmail.com` / `password`
-- To remove later: `bin/worktree remove <branch-name>`
+- To remove later: `~/.claude/scripts/worktree remove <branch-name>`
 - Worktrees auto-cleanup when branches are merged (if git hooks are installed)

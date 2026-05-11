@@ -1,6 +1,8 @@
 ---
 name: tier2
 description: Create a Tier 2 worktree environment with isolated database for feature development. Use when starting work that involves database migrations, data modifications, or any code changes that should be isolated from the main branch.
+model: haiku
+allowed-tools: Bash, Read, AskUserQuestion
 ---
 
 # Tier 2 Worktree Setup
@@ -23,24 +25,26 @@ If the user provided a branch name as an argument, use it. Otherwise, ask:
 
 ### Step 2: Create the Worktree
 
-Run the worktree creation command:
+Run the worktree creation command. Prefer the global script at `~/.claude/scripts/worktree` so projects don't need a per-repo `bin/worktree`. If a project-local `bin/worktree` exists, that one may be used instead.
 
 ```bash
-bin/worktree create <branch-name>
+~/.claude/scripts/worktree create <branch-name>
 ```
 
 If the user wants to branch from a specific base branch (not main), use:
 
 ```bash
-bin/worktree create <branch-name> --from <base-branch>
+~/.claude/scripts/worktree create <branch-name> --from <base-branch>
 ```
+
+The global script auto-detects project root (nearest `artisan` + `.env`), project name (from directory), and DB driver/credentials (from `.env`). It supports both MySQL and PostgreSQL.
 
 ### Step 3: Verify and Report
 
 After creation, run:
 
 ```bash
-bin/worktree info <branch-name>
+~/.claude/scripts/worktree info <branch-name>
 ```
 
 Report to the user:
@@ -87,7 +91,7 @@ Next steps:
 
 ## Important Notes
 
-- The database is seeded from `storage/app/database-dumps/copy-of-database.sql`
+- The database is seeded from `storage/app/database-dumps/copy-of-database.sql` (per project). This file should be gitignored — each project maintains its own local dump.
 - Test account: `dfieldmark69@gmail.com` / `password`
-- To remove later: `bin/worktree remove <branch-name>`
+- To remove later: `~/.claude/scripts/worktree remove <branch-name>`
 - Worktrees auto-cleanup when branches are merged (if git hooks are installed)
