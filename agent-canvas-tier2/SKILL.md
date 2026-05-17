@@ -37,15 +37,26 @@ If the user provided a branch name as an argument, use it. Otherwise, ask:
 
 ### Step 2: Create the Worktree
 
-Run the worktree creation command:
+First, capture the source branch — this becomes the `parentBranch` in metadata
+so the Diff tile knows what to compare against:
+
+```bash
+# If the user passed --from <base>, use that value.
+# Otherwise capture the project's current branch as the implicit source:
+PARENT_BRANCH=$(git -C "$(pwd)" rev-parse --abbrev-ref HEAD)
+```
+
+Then run the worktree creation command:
 
 ```bash
 ~/.claude/scripts/worktree create <branch-name>
 ```
 
-If the user wants to branch from a specific base branch (not main), use:
+If the user wants to branch from a specific base branch (not main), use the
+explicit `--from` form and set `PARENT_BRANCH` to that value:
 
 ```bash
+PARENT_BRANCH=<base-branch>
 ~/.claude/scripts/worktree create <branch-name> --from <base-branch>
 ```
 
@@ -76,7 +87,8 @@ curl -s -X POST $AGENT_CANVAS_API/api/terminal/metadata \
       \"branch\": \"<branch-name>\",
       \"path\": \"<worktree-path>\",
       \"url\": \"<site-url>\",
-      \"database\": \"<database-name>\"
+      \"database\": \"<database-name>\",
+      \"parentBranch\": \"$PARENT_BRANCH\"
     }
   }"
 ```
