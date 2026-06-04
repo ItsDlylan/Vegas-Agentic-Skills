@@ -69,6 +69,21 @@ npx agent-browser --cdp $CDP_PORT get url   # MUST match your <target-url> host
 
 If the URL is not your expected host, **STOP** — you're likely pointed at another agent's tile. Re-check Steps 1–2; do not navigate, fill, or log anything out.
 
+### Recovery — `get url` keeps returning the WRONG tile (shared-daemon contention)
+
+The `agent-browser` daemon is **shared across all agents**, and its default/"connected" session is a single global thing. When another agent connects it to their tile, your `connect`/`--cdp` commands can keep echoing **their** page even though your raw CDP port is correct. (Confirm the port itself is fine: `curl -s http://127.0.0.1:$CDP_PORT/json/list` — if it shows YOUR url, the port is good and only the daemon's session is contended.)
+
+**Fix: bind an isolated NAMED session to your port** and pass it on *every* command. A unique `--session` name forces a fresh connection to your `--cdp` port instead of reusing the contaminated default — no `close --all`, no disruption to anyone:
+
+```bash
+S="--cdp $CDP_PORT --session mytile-$$"     # unique per run
+npx agent-browser $S get url                 # now returns YOUR host
+npx agent-browser $S snapshot -i
+npx agent-browser $S fill @e10 "..."
+```
+
+⚠️ In **zsh**, an unquoted `$S` is NOT word-split — pass the flags inline (`npx agent-browser --cdp $CDP_PORT --session mytile-1 get url`) or use a bash array, or `${=S}`. If you see `Unknown command: --cdp ... --session ...`, that's the zsh word-split gotcha, not a bad flag.
+
 ## 🛑 CRITICAL: NEVER run `agent-browser close --all` without explicit permission
 
 `agent-browser` uses a **single shared daemon** across every terminal and browser tile on this machine. `npx agent-browser close --all` tears down **all** of that daemon's sessions — including tiles that **other agents on the canvas are actively driving**. Running it routinely (as a "clear stale session" step before `connect`) has logged out and hijacked another agent's live session. There is **no routine need** for it.
@@ -79,7 +94,8 @@ If the URL is not your expected host, **STOP** — you're likely pointed at anot
 
 1. **Just `connect`.** `npx agent-browser connect $CDP_PORT` re-points the daemon at your tile on its own — you do NOT need to close anything first.
 2. **Pass `--cdp` on every command.** `npx agent-browser --cdp $CDP_PORT snapshot -i` talks only to YOUR tile and never touches the shared default session, so it can't disturb another agent.
-3. **Close one specific tile by id**, never all of them: `curl -s -X POST $AGENT_CANVAS_API/api/browser/close -d '{"sessionId":"<your-sessionId>"}'`.
+3. **Use an isolated named session** when the daemon is stuck on another agent's tile: `npx agent-browser --cdp $CDP_PORT --session mytile-$$ <cmd>` (see "Recovery" above). This replaces every reason you might reach for `close --all`.
+4. **Close one specific tile by id**, never all of them: `curl -s -X POST $AGENT_CANVAS_API/api/browser/close -d '{"sessionId":"<your-sessionId>"}'`.
 
 This rule overrides any `close --all` shown in the examples below — those are legacy and must not be copied verbatim.
 
