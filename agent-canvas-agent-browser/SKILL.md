@@ -1,7 +1,8 @@
 ---
 name: agent-canvas-agent-browser
 description: Browser automation inside AgentCanvas — spawns a live browser tile on the canvas and controls it via CDP. Use when running inside an AgentCanvas terminal and the user needs to navigate, test, or research a website visually on the canvas.
-allowed-tools: Bash
+allowed-tools: Bash, AskUserQuestion
+disallowed-tools: Bash(npx agent-browser close --all:*), Bash(agent-browser close --all:*)
 model: haiku
 ---
 
@@ -28,6 +29,60 @@ All three must be set. If not, this skill won't work — fall back to the standa
 3. You run `npx agent-browser connect $CDP_PORT` then commands auto-target the canvas tile
 4. The user sees every action live and can interact with the browser manually at the same time
 
+## ▶️ When Invoked: Required First Steps (do these IN ORDER)
+
+These guarantee you target **your** terminal's tile and never collide with another agent's browser on the shared daemon. Skipping them is how you end up driving — and logging out — someone else's session.
+
+### Step 1 — Discover the tiles already attached to YOUR terminal
+
+```bash
+curl -s "$AGENT_CANVAS_API/api/tile/discover?terminalId=$AGENT_CANVAS_TERMINAL_ID&types=browsers" \
+  | python3 -c "import sys,json; b=json.load(sys.stdin)['tilesByType'].get('browsers',[]); print(json.dumps(b,indent=2))"
+```
+
+Every entry is a browser tile **linked to your terminal** (`linkedTerminalId == $AGENT_CANVAS_TERMINAL_ID`), with its `sessionId` and current `url`. Use this to:
+- **Reuse** an existing tile (grab its `sessionId`) instead of spawning a duplicate.
+- **Know which tile is yours.** Never drive a tile whose `linkedTerminalId` is not your terminal — that's another agent's browser.
+
+### Step 2 — Spawn the browser tile ATTACHED to your terminal (capture `cdpPort` AND `sessionId`)
+
+Always pass `terminalId` so the tile is **bound to your terminal** and reuses your terminal's pre-allocated CDP port (`$AGENT_BROWSER_CDP_PORT`). Capture **both** `cdpPort` and `sessionId` from the response — you need the sessionId to target/close exactly your tile later.
+
+```bash
+SPAWN=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
+  -H 'Content-Type: application/json' \
+  -d "{\"url\":\"<target-url>\",\"terminalId\":\"$AGENT_CANVAS_TERMINAL_ID\"}")
+CDP_PORT=$(echo "$SPAWN" | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
+SID=$(echo "$SPAWN" | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
+echo "my tile → cdpPort=$CDP_PORT sessionId=$SID"
+sleep 3   # let the webview mount
+```
+
+### Step 3 — Verify the tile is yours BEFORE interacting
+
+Connect, then confirm the host before any click/fill/navigate. Prefer `--cdp $CDP_PORT` on commands so you only ever talk to your own tile:
+
+```bash
+npx agent-browser connect $CDP_PORT
+npx agent-browser --cdp $CDP_PORT get url   # MUST match your <target-url> host
+```
+
+If the URL is not your expected host, **STOP** — you're likely pointed at another agent's tile. Re-check Steps 1–2; do not navigate, fill, or log anything out.
+
+## 🛑 CRITICAL: NEVER run `agent-browser close --all` without explicit permission
+
+`agent-browser` uses a **single shared daemon** across every terminal and browser tile on this machine. `npx agent-browser close --all` tears down **all** of that daemon's sessions — including tiles that **other agents on the canvas are actively driving**. Running it routinely (as a "clear stale session" step before `connect`) has logged out and hijacked another agent's live session. There is **no routine need** for it.
+
+**Hard rule:** Do NOT run `npx agent-browser close --all` (or any `close --all`) unless you have FIRST asked the user with the **AskUserQuestion** tool and they explicitly approved it. If they don't approve, find another way. This command is also listed in this skill's `disallowed-tools` frontmatter, so the harness blocks it while the skill is active — if you genuinely need it, asking the user is the only path, and they must lift the block themselves.
+
+**You almost never need it.** Three safe alternatives, in order of preference:
+
+1. **Just `connect`.** `npx agent-browser connect $CDP_PORT` re-points the daemon at your tile on its own — you do NOT need to close anything first.
+2. **Pass `--cdp` on every command.** `npx agent-browser --cdp $CDP_PORT snapshot -i` talks only to YOUR tile and never touches the shared default session, so it can't disturb another agent.
+3. **Close one specific tile by id**, never all of them: `curl -s -X POST $AGENT_CANVAS_API/api/browser/close -d '{"sessionId":"<your-sessionId>"}'`.
+
+This rule overrides any `close --all` shown in the examples below — those are legacy and must not be copied verbatim.
+
 ## Auto-Discovery: Worktree URL
 
 Before spawning a browser tile, check if the terminal has worktree metadata registered (set by `/agent-canvas-tier2`):
@@ -48,20 +103,22 @@ If the user provides an explicit URL, always use that instead.
 Before running any `agent-browser` command, you MUST spawn the browser tile via the Canvas API. The API returns the CDP port to use. **You MUST capture this port from the response.**
 
 ```bash
-# Step 1: Spawn the browser tile and capture the CDP port from the response
+# Step 1: Spawn the tile ATTACHED to your terminal; capture cdpPort AND sessionId
 SPAWN_RESULT=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
   -H 'Content-Type: application/json' \
   -d "{\"url\":\"https://example.com\",\"terminalId\":\"${AGENT_CANVAS_TERMINAL_ID:-}\"}")
 CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
+SID=$(echo $SPAWN_RESULT | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
 
 # Step 2: Wait for the webview to mount
 sleep 3
 
-# Step 3: Close any stale daemon session, then connect to the canvas tile
-npx agent-browser close --all 2>/dev/null
+# Step 3: Connect the daemon to the canvas tile.
+# `connect` alone re-points the daemon — do NOT run `close --all` (see the rule above).
 npx agent-browser connect $CDP_PORT
 
-# Step 4: Now run commands — no --cdp flag needed, the daemon remembers
+# Step 4: Verify you're on YOUR tile's expected host, THEN run commands
+npx agent-browser --cdp $CDP_PORT get url   # sanity-check before acting
 npx agent-browser snapshot -i
 ```
 
@@ -106,7 +163,7 @@ Agent({
 
 2. **Connect the daemon to the canvas tile:**
    \`\`\`bash
-   npx agent-browser close --all 2>/dev/null
+   # `connect` alone re-points the daemon — never prefix with `close --all` (see the rule near the top).
    npx agent-browser connect $CDP_PORT
    \`\`\`
 
@@ -160,7 +217,7 @@ CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
 sleep 3
 
 # 2. Connect the daemon to the canvas tile
-npx agent-browser close --all 2>/dev/null
+# `connect` alone re-points the daemon — do NOT run `close --all` (see the rule near the top).
 npx agent-browser connect $CDP_PORT
 
 # 3. Now all commands auto-target the canvas tile (no --cdp needed):
@@ -174,7 +231,7 @@ npx agent-browser screenshot r.png  # Screenshot
 
 1. **Spawn tile and capture port**: `curl` the Canvas API, parse `cdpPort` from response
 2. **Wait for webview**: `sleep 3`
-3. **Connect daemon**: `npx agent-browser close --all 2>/dev/null && npx agent-browser connect $CDP_PORT`
+3. **Connect daemon**: `npx agent-browser connect $CDP_PORT` (do NOT prefix with `close --all` — see the rule near the top)
 4. **Snapshot**: `npx agent-browser snapshot -i` (returns refs like `@e1`, `@e2`)
 5. **Interact** using refs from the snapshot
 6. **Re-snapshot** after navigation or major DOM changes
@@ -309,7 +366,7 @@ CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
 sleep 3
 
 # Connect the daemon to the canvas tile
-npx agent-browser close --all 2>/dev/null
+# `connect` alone re-points the daemon — do NOT run `close --all` (see the rule near the top).
 npx agent-browser connect $CDP_PORT
 
 # Scout the page
@@ -336,7 +393,7 @@ CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
 sleep 3
 
 # Connect the daemon to the canvas tile
-npx agent-browser close --all 2>/dev/null
+# `connect` alone re-points the daemon — do NOT run `close --all` (see the rule near the top).
 npx agent-browser connect $CDP_PORT
 
 # Get form elements
@@ -362,7 +419,7 @@ CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
 sleep 3
 
 # Connect the daemon to the canvas tile
-npx agent-browser close --all 2>/dev/null
+# `connect` alone re-points the daemon — do NOT run `close --all` (see the rule near the top).
 npx agent-browser connect $CDP_PORT
 
 npx agent-browser snapshot -i
@@ -377,6 +434,62 @@ npx agent-browser state load auth.json
 npx agent-browser open https://app.example.com/dashboard
 ```
 
+## Example: Parallel Testing with Incognito Tiles
+
+For testing features that require two simultaneous users in the same app (chat
+messaging, real-time collaboration, multiplayer flows), spawn one normal tile
+and one incognito tile pointing at the same URL. They will not share cookies,
+so each can log in as a different user.
+
+```bash
+URL="https://chat.example.com"
+
+# Tile A — normal session (logs in as user A, persists across restarts)
+A=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
+  -H 'Content-Type: application/json' \
+  -d "{\"url\":\"$URL\",\"terminalId\":\"${AGENT_CANVAS_TERMINAL_ID:-}\"}")
+A_PORT=$(echo $A | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
+A_SID=$(echo $A | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
+
+# Tile B — incognito twin of A (isolated cookies, dashed amber edge on canvas)
+B=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
+  -H 'Content-Type: application/json' \
+  -d "{\"url\":\"$URL\",\"incognito\":true,\"linkedBrowserId\":\"$A_SID\"}")
+B_PORT=$(echo $B | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
+
+sleep 3
+
+# The agent-browser daemon can only point at one port at a time. To drive both
+# tiles from one terminal, pass --cdp explicitly on every command:
+npx agent-browser --cdp $A_PORT snapshot -i
+npx agent-browser --cdp $A_PORT fill @e1 "user-a@example.com"
+
+npx agent-browser --cdp $B_PORT snapshot -i
+npx agent-browser --cdp $B_PORT fill @e1 "user-b@example.com"
+```
+
+If your workflow is dominated by one of the tiles, you can `connect` the
+daemon to that port and only pass `--cdp` for the other:
+
+```bash
+# `connect` alone re-points the daemon — never prefix with `close --all` (see the rule near the top).
+npx agent-browser connect $A_PORT       # default
+npx agent-browser snapshot -i           # targets tile A
+npx agent-browser --cdp $B_PORT click @e3   # one-off command on tile B
+```
+
+Notes:
+- Two incognito tiles also do NOT share cookies with each other — each gets
+  its own unique partition (`incognito:<sessionId>`). You can spawn as many
+  parallel sessions as you need.
+- The incognito twin button on the browser tile's header (in the canvas UI)
+  does the same thing manually — useful for the user to spawn a twin when
+  they discover the need mid-test.
+- Restart behavior: only the linked-twin incognito tile in the example above
+  is restored on app restart (with empty cookies); a standalone incognito
+  tile spawned without `linkedBrowserId` is treated as a one-off test and
+  is not persisted.
+
 ## Canvas API Reference
 
 ### Check canvas status
@@ -384,13 +497,27 @@ npx agent-browser open https://app.example.com/dashboard
 curl -s $AGENT_CANVAS_API/api/status | jq
 ```
 
-### Spawn browser tile (returns cdpPort)
+### Spawn browser tile (returns cdpPort + sessionId)
 ```bash
 SPAWN_RESULT=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
   -H 'Content-Type: application/json' \
   -d "{\"url\":\"https://example.com\",\"terminalId\":\"${AGENT_CANVAS_TERMINAL_ID:-}\"}")
 CDP_PORT=$(echo $SPAWN_RESULT | grep -o '"cdpPort":[0-9]*' | grep -o '[0-9]*')
+SID=$(echo $SPAWN_RESULT | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
 ```
+
+Request body fields:
+- `url` (required) — initial URL
+- `terminalId` (optional) — link the tile to a terminal (reuses the terminal's pre-allocated CDP port)
+- `width`, `height` (optional) — tile dimensions
+- `incognito` (optional, boolean) — spawn the tile with an isolated, in-memory partition. Cookies/localStorage are NOT shared with normal tiles or with other incognito tiles. Standalone incognito tiles do not persist across app restarts; incognito tiles spawned with `linkedBrowserId` DO persist.
+- `linkedBrowserId` (optional) — attach this tile to an existing browser tile (draws a dashed amber edge between them on the canvas). Use this to mark an incognito tile as a "twin" of a primary tile in a parallel-testing setup.
+
+Response fields:
+- `ok` — boolean
+- `cdpPort` — connect `agent-browser` to this port
+- `sessionId` — the canvas tile id (use this as `linkedBrowserId` in follow-up calls)
+- `message` — human-readable status
 
 ### Close browser tile
 ```bash
