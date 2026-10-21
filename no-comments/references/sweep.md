@@ -85,5 +85,5 @@ Run this after steps 1 to 7 of `SKILL.md`.
    ```
 
    If the push is refused, say so in the report. The next sweep rescans the same range.
-3. Remove a local checkout after pushing: `~/.claude/scripts/worktree remove <branch>`, or `git worktree remove <path>`.
+3. Remove a local checkout after pushing. `~/.claude/scripts/worktree remove <branch>` drops the databases named by `DB_DATABASE` in the worktree's `.env`. When that name matches the main checkout's, as it does after the copy fallback in step 2, the script would drop the main database, so run `git worktree remove <path>` instead. Otherwise use either command.
 4. Report the branch or PR URL (or "nothing to sweep"), the counts, and the open items.
