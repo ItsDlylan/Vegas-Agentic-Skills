@@ -5,8 +5,6 @@ description: Runs Comment Sicko, a fresh-eyes reviewer that deletes narrating, s
 
 # No comments
 
-Adapted from poteto's `no-comments` skill and Comment Sicko agent in pstack (MIT, see `LICENSE`).
-
 Spawn Comment Sicko. Act on accepted findings.
 
 Defer to Comment Sicko's fresh perspective.

@@ -6,8 +6,6 @@ disable-model-invocation: true
 
 # Why
 
-Adapted from poteto's `why` skill in pstack (MIT, see `LICENSE`).
-
 Investigate the motivation and intent behind code. The companion `how` skill answers what the code does and how it works. `why` answers what forces led to its shape.
 
 Every spawn is an `Agent` call with `subagent_type: "general-purpose"`. **Do not use `Explore`.** Investigators need the session's MCP servers, and the synthesizer needs them for citation spot-checks. Investigators still shouldn't write anything. Investigators use `model: "sonnet"`. The synthesizer uses `model: "opus"` and `effort: "xhigh"`.

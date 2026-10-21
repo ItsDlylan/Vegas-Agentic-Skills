@@ -5,8 +5,6 @@ description: Explains how code works. Use for "how does X work", walkthroughs be
 
 # How
 
-Adapted from poteto's `how` skill in pstack (MIT, see `LICENSE`).
-
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
 Every spawn is an `Agent` call and stays read-only. Explorers use `subagent_type: "Explore"` and `model: "sonnet"`. The explainer uses `subagent_type: "general-purpose"`, `model: "opus"`, and `effort: "xhigh"`, and its prompt ends with "Do not edit files." Run `git status` after each spawn returns and revert anything a spawn wrote.
