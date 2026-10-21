@@ -70,7 +70,7 @@ A comment whose claim is true today stays when its `MUST KILL` fix is not one th
 
 Run this after steps 1 to 7 of `SKILL.md`.
 
-1. If the checkout has changes, commit them as `chore(no-comments): sweep <YYYY-MM-DD>` and push with `git push -u origin <branch>`. On a GitHub remote, open the PR with `gh pr create --base <base> --title "chore: sweep comments (<YYYY-MM-DD>)"`. On any other forge, report the branch and the PR body so a person can open it. The body has two sections only: a summary (deletions, restores, fixes, reverts, open items) and a test plan (the checks from step 6 of `SKILL.md` and their results).
+1. If the checkout has changes, commit them as `chore(no-comments): sweep <YYYY-MM-DD>` and push with `git push -u origin <branch>:<branch>`. Spell out both sides: the worktree script sets the branch to track the base, so a bare push can land on the base. On a GitHub remote, open the PR with `gh pr create --base <base> --title "chore: sweep comments (<YYYY-MM-DD>)"`. On any other forge, report the branch and the PR body so a person can open it. The body has two sections only: a summary (deletions, restores, fixes, reverts, open items) and a test plan (the checks from step 6 of `SKILL.md` and their results).
 2. Save state once the branch is pushed, or when the sweep changed nothing. If the push failed, skip this step so the next sweep covers the same range. Set `lastSweep` to `BASE_SHA` and `backlogCursor` to the last backlog file swept. Add the keeps Comment Sicko proved this run, with `checked` set to today. Write `state.json` outside the checkout, then publish it:
 
    ```bash
