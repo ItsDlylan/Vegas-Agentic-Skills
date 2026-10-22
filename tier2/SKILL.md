@@ -39,6 +39,8 @@ If the user wants to branch from a specific base branch (not main), use:
 
 The global script auto-detects project root (nearest `artisan` + `.env`), project name (from directory), and DB driver/credentials (from `.env`). It supports both MySQL and PostgreSQL.
 
+The script creates BOTH `.env` (pointing at the worktree's own database) and `.env.testing` (pointing at its `_test` twin). This isolation is critical — without `.env.testing`, `php artisan test` falls back to `.env` and `RefreshDatabase` will truncate the worktree's database, wiping all seeded data.
+
 ### Step 3: Verify and Report
 
 After creation, run:
