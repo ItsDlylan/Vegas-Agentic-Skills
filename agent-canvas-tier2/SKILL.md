@@ -132,6 +132,40 @@ SPAWN_RESULT=$(curl -s -X POST $AGENT_CANVAS_API/api/browser/open \
 echo $SPAWN_RESULT
 ```
 
+Capture the new browser's sessionId from the response (`SPAWN_RESULT` JSON has `sessionId`):
+
+```bash
+BROWSER_SESSION_ID=$(echo $SPAWN_RESULT | python3 -c "import sys, json; print(json.load(sys.stdin).get('sessionId',''))")
+```
+
+### Step 6b: Offer to Wrap the Session in a Grouping
+
+If the browser was spawned successfully (or even if it wasn't), ask the user:
+
+> Want me to bundle this terminal + browser into a grouping named `<branch>` so they stay together on the canvas?
+
+If they say yes, create a grouping wrapping the terminal and (if it exists) the browser. The branch name makes a good grouping label. Workspace is auto-resolved from `linkedTerminalId`:
+
+```bash
+# Build the memberIds JSON array dynamically so the command stays valid
+# whether or not a browser was spawned.
+MEMBER_IDS="[\"$AGENT_CANVAS_TERMINAL_ID\""
+if [ -n "$BROWSER_SESSION_ID" ]; then
+  MEMBER_IDS="$MEMBER_IDS,\"$BROWSER_SESSION_ID\""
+fi
+MEMBER_IDS="$MEMBER_IDS]"
+
+curl -s -X POST $AGENT_CANVAS_API/api/grouping/create \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"label\": \"<branch-name>\",
+    \"memberIds\": $MEMBER_IDS,
+    \"linkedTerminalId\": \"$AGENT_CANVAS_TERMINAL_ID\"
+  }"
+```
+
+The response contains `{"ok":true,"groupingId":"<uuid>"}`. From here on, **every tile this terminal's agent spawns afterward auto-joins the same grouping** (notes, browsers, draws, sub-terminals — see "Grouping inheritance" in AgentCanvas's `CLAUDE.md`). The worktree session becomes a self-contained, visually distinct unit on the canvas: dismantle the grouping when the branch ships and everything goes with it.
+
 ### Step 7: Update Working Directory
 
 ```bash
