@@ -64,6 +64,8 @@ export function overlay(config) {
     }))
   }, true)
   addEventListener('mouseup', () => { if (cursor) cursor.style.scale = '1' }, true)
+  // A dropdown's own menu is drawn outside the page, so a recording never shows it: it stays shut, and `choose` picks.
+  addEventListener('mousedown', (e) => { if (!off && e.target instanceof HTMLSelectElement) e.preventDefault() }, true)
   document.addEventListener('DOMContentLoaded', mount)
   const remount = setInterval(mount, 500)
   mount()
@@ -72,9 +74,15 @@ export function overlay(config) {
   const inOverlay = (node) => root?.contains(node)
   const visible = (node) => {
     const r = node.getBoundingClientRect()
-    if (r.width < 1 || r.height < 1) return false
+    // A box of a pixel or less is how a page hides something to the eye (sr-only); it measures 0.83 at a 1.2 scale.
+    if (r.width === 0 || r.height === 0 || (r.width <= 1 && r.height <= 1)) return false
     const cs = getComputedStyle(node)
     return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05
+  }
+  /** Has its place on the page, shown or not: a section that fades in once it is scrolled to. */
+  const laidOut = (node) => {
+    const r = node.getBoundingClientRect()
+    return r.width >= 1 && r.height >= 1 && getComputedStyle(node).display !== 'none'
   }
   const textMatcher = (want) => {
     const re = /^\/(.*)\/([a-z]*)$/.exec(want)
@@ -100,8 +108,9 @@ export function overlay(config) {
     if (target.startsWith('label=')) {
       const want = norm(target.slice(6))
       const found = new Set()
+      // A required field's label often ends in a *: "Email *" is still label=Email.
       for (const label of document.querySelectorAll('label')) {
-        if (norm(label.textContent) !== want) continue
+        if (norm(label.textContent).replace(/\s*\*$/, '') !== want) continue
         const control = label.control ?? label.querySelector('input, textarea, select')
         if (control) found.add(control)
       }
@@ -149,9 +158,26 @@ export function overlay(config) {
       }
       requestAnimationFrame(step)
     })
+  /**
+   * Wholly on screen, wholly inside what scrolls it, and nothing (a sticky header, a dialog's sticky footer) over the
+   * middle of it where the driver aims (its aim(): up to 15% of the size off center, 12 px across and 4 down at most).
+   */
   const inView = (node) => {
     const r = node.getBoundingClientRect()
-    return r.top >= 60 && r.bottom <= innerHeight - 60
+    if (r.top < 60 || r.bottom > innerHeight - 60) return false
+    const box = scrollerOf(node)
+    if (box !== document.scrollingElement && box !== document.documentElement) {
+      const s = box.getBoundingClientRect()
+      if (r.top < s.top || r.bottom > s.bottom) return false
+    }
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    const dx = Math.min(r.width * 0.15, 12)
+    const dy = Math.min(r.height * 0.15, 4)
+    return [[0, 0], [-dx, -dy], [dx, -dy], [-dx, dy], [dx, dy]].every(([x, y]) => {
+      const hit = document.elementFromPoint(cx + x, cy + y)
+      return !hit || node.contains(hit)
+    })
   }
 
   window.__takt = {
@@ -213,9 +239,12 @@ export function overlay(config) {
     count(target) {
       return all(target).filter(visible).length
     },
-    /** Scrolls what holds the target (and then the page, when that is not enough) so it sits a third of the way down. */
+    /**
+     * Scrolls what holds the target (and then the page, when that is not enough) so it sits a third of the way down.
+     * A target the page only shows once it is scrolled to is scrolled to all the same, and given once it shows.
+     */
     async reveal(target) {
-      const node = find(target)
+      const node = find(target) ?? all(target).find(laidOut)
       if (!node) return null
       for (let pass = 0; pass < 2 && !inView(node); pass++) {
         const box = pass === 0 ? scrollerOf(node) : document.scrollingElement ?? document.documentElement
@@ -223,7 +252,7 @@ export function overlay(config) {
         const height = top === 0 ? innerHeight : box.clientHeight
         await animate(box, box.scrollTop + (node.getBoundingClientRect().top - top) - 0.33 * height)
       }
-      return rect(node)
+      return visible(node) ? rect(node) : null
     },
     scrollBy(dy) {
       const box = document.scrollingElement ?? document.documentElement
@@ -232,11 +261,24 @@ export function overlay(config) {
     value(target) {
       const node = find(target) ?? all(target)[0]
       if (!node) return null
+      if (node instanceof HTMLSelectElement) return norm(node.selectedOptions[0]?.label)
       return 'value' in node && typeof node.value === 'string' ? node.value : norm(node.innerText ?? node.textContent)
     },
     text(target) {
       const node = find(target) ?? all(target)[0]
       return node ? norm(node.innerText ?? node.textContent) : null
+    },
+    /** Picks a dropdown's option by its words (or value), the way the app hears a person do it; null, or what is wrong. */
+    choose(target, option) {
+      const node = find(target)
+      if (!(node instanceof HTMLSelectElement)) return node ? `${target} is not a dropdown` : `Cannot find ${target}`
+      const opt = [...node.options].find((o) => norm(o.label) === norm(option) || o.value === option)
+      if (!opt) return `${target} has no “${option}” (it has ${[...node.options].map((o) => `“${norm(o.label)}”`).join(', ')})`
+      node.focus()
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(node, opt.value)
+      node.dispatchEvent(new Event('input', { bubbles: true }))
+      node.dispatchEvent(new Event('change', { bubbles: true }))
+      return null
     },
     /** Selects what the field holds, so the next key replaces it. */
     selectAll(target) {

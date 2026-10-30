@@ -143,7 +143,7 @@ export class Driver {
     this.at = to
   }
 
-  /** Where to aim inside a box: near its middle, a little off, the way a hand lands. */
+  /** Where to aim inside a box: near its middle, a little off, the way a hand lands (the overlay's inView keeps that clear). */
   aim(box) {
     const jx = (this.random() - 0.5) * Math.min(box.width * 0.3, 24)
     const jy = (this.random() - 0.5) * Math.min(box.height * 0.3, 8)
@@ -167,6 +167,15 @@ export class Driver {
     const p = this.aim(box)
     await this.moveTo(p.x, p.y, Math.min(box.width, box.height))
     await sleep(this.fast ? 50 : 450)
+    return box
+  }
+
+  /** Presses the dropdown like a hand would, then picks the option (its own menu would not show in the recording). */
+  async select(target, option) {
+    const box = await this.click(target)
+    const problem = await this.takt('choose', target, option)
+    if (problem) throw new Error(problem)
+    await sleep(this.fast ? 0 : 350)
     return box
   }
 

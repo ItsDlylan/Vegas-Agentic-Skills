@@ -9,6 +9,8 @@
  *   takt-record.mjs notes <bundle> [--all]      the user's notes on the video, placed back on the page
  *   takt-record.mjs note-done <bundle> <noteId> <what you changed>
  *
+ * In a take, {run} becomes a stamp new to each run: a field that must be new every time (a sign-up's email).
+ *
  * Options: --out <dir>  --cdp <port|url> --page <url part> (record someone's browser instead of launching one)
  *          --headed  --takt-home <dir>  --no-render  --keep-frames
  */
@@ -24,7 +26,7 @@ import { overlaySource } from './lib/overlay.mjs'
 import { noteDone, notes, projectName, send } from './lib/takt.mjs'
 import { clock, ffmpegTools, gitInfo, prInfo, sleep, slug } from './lib/util.mjs'
 
-const VERBS = ['goto', 'click', 'hover', 'type', 'press', 'scroll', 'wait', 'waitFor', 'waitForUrl']
+const VERBS = ['goto', 'click', 'hover', 'type', 'select', 'press', 'scroll', 'wait', 'waitFor', 'waitForUrl']
 const CHECKS = ['see', 'notSee', 'url', 'value', 'text', 'count']
 /** Dev toolbars nobody needs to see in a QA video. Error overlays stay: they are findings. */
 const DEFAULT_HIDE = ['.phpdebugbar', '.sf-toolbar', 'astro-dev-toolbar']
@@ -46,7 +48,7 @@ function parseArgs(argv) {
 }
 
 function loadTake(path) {
-  const take = JSON.parse(readFileSync(path, 'utf8'))
+  const take = JSON.parse(readFileSync(path, 'utf8').replaceAll('{run}', Date.now().toString(36).slice(-6)))
   const problems = []
   if (!take.title) problems.push('title: say what the take shows (it becomes the title card)')
   if (!Array.isArray(take.beats) || !take.beats.length) problems.push('beats: at least one beat')
@@ -56,6 +58,7 @@ function loadTake(path) {
     const verbs = VERBS.filter((v) => v in a)
     if (verbs.length !== 1) problems.push(`${where}: one of ${VERBS.join(', ')} (got ${Object.keys(a).join(', ') || 'nothing'})`)
     if ('type' in a && typeof a.text !== 'string') problems.push(`${where}: type needs text`)
+    if ('select' in a && typeof a.option !== 'string') problems.push(`${where}: select needs option`)
   }
   for (const [i, a] of (take.setup ?? []).entries()) action(a, `setup[${i}]`)
   for (const [i, beat] of (take.beats ?? []).entries()) {
@@ -123,6 +126,8 @@ async function act(driver, a, take) {
       return driver.hover(a.hover)
     case 'type':
       return driver.type(a.type, a.text, { clear: a.clear === true })
+    case 'select':
+      return driver.select(a.select, a.option)
     case 'press':
       return driver.press(a.press)
     case 'scroll':
@@ -287,8 +292,10 @@ async function record(takePath, opts) {
   }
   events.project = projectName(events)
   writeFileSync(join(bundle, 'events.json'), `${JSON.stringify(events, null, 2)}\n`)
-  writeFileSync(join(bundle, 'take.json'), readFileSync(takePath))
-  for (const c of clips) if (c) rmSync(c.path.replace(/\.wav$/, '.aiff'), { force: true })
+  // As played, with {run} filled in.
+  writeFileSync(join(bundle, 'take.json'), `${JSON.stringify(take, null, 2)}\n`)
+  // Each beat's voice is in narration.wav now.
+  for (const c of clips) if (c) for (const f of [c.path, c.path.replace(/\.wav$/, '.aiff')]) rmSync(f, { force: true })
   if (!opts['keep-frames']) rmSync(framesDir, { recursive: true, force: true })
   console.log(`${events.ok ? '✓' : '✗'} ${passed} of ${checks.length} checks passed · ${clock(endMs)} · ${frames.length} frames`)
   console.log(`Bundle: ${bundle}`)
