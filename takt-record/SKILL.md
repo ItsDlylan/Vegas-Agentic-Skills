@@ -67,12 +67,17 @@ Run it from the repo of the change: the bundle and the Takt project are named af
 - Optional: `viewport` (`[1600, 900]` default, any 16:9), `voice` (a `say -v '?'` name), `rate` (185 words a minute),
   `narrate: false`, `insecure: true` (an untrusted local HTTPS certificate), `project` (the Takt project's name).
 - A beat: `say` (one line), `do` (actions, in order), `check` (claims), `holdMs` (extra time on screen after).
+- `{run}` anywhere in the take becomes a stamp new to each run, for a value the app refuses twice: a sign-up's
+  `"ash+{run}@example.com"`. Rehearsal is a run too, so without it the real take finds the email taken. A sign-up is
+  often rate limited too (a few a minute): leave a minute between a rehearsal and the take.
 
 **Targets:** `text=Save` (the element whose text is exactly that; `text=/save/i` for a pattern), `label=Email` (a field by
-its label, aria-label or placeholder), or any CSS selector. Prefer text and label: they read like the UI and survive
-refactors.
+its label, aria-label or placeholder; a required field's trailing `*` is ignored), or any CSS selector. Prefer text and
+label: they read like the UI and survive refactors.
 
-**Actions:** `{ "click": t }`, `{ "hover": t }`, `{ "type": t, "text": "…", "clear": true }`, `{ "press": "Enter" }` or
+**Actions:** `{ "click": t }`, `{ "hover": t }`, `{ "type": t, "text": "…", "clear": true }`,
+`{ "select": t, "option": "…" }` (a dropdown, by the option's words: its own menu never shows in a recording, so the
+cursor presses it and the option is picked), `{ "press": "Enter" }` or
 `"Meta+k"` (shortcuts show as a key chip), `{ "scroll": t }` or `{ "scroll": 600 }`, `{ "goto": "/path" }`,
 `{ "wait": 800 }`, `{ "waitFor": t }`, `{ "waitForUrl": "/done" }`. Add `"at": "a phrase of the line"` to an action to
 make it land as that phrase is said; without it, actions follow each other at a natural pace.
