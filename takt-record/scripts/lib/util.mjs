@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename, delimiter, join } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const exec = promisify(execFile)
@@ -47,16 +47,21 @@ export async function durationMs(ffprobe, path) {
   return Math.round(Number(out.trim()) * 1000)
 }
 
-/** The repo the take is about: its folder name, branch and commit. */
+/**
+ * The repo the take is about: its name, branch and commit. The name is the main checkout's folder, also from a
+ * worktree (so a worktree's takes file under its repo, not under the worktree's folder name).
+ */
 export async function gitInfo(cwd) {
   const root = await tryRun('git', ['rev-parse', '--show-toplevel'], { cwd })
   if (!root) return null
-  const [branch, sha, dirty] = await Promise.all([
+  const [branch, sha, dirty, common] = await Promise.all([
     tryRun('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd }),
     tryRun('git', ['rev-parse', 'HEAD'], { cwd }),
-    tryRun('git', ['status', '--porcelain'], { cwd })
+    tryRun('git', ['status', '--porcelain'], { cwd }),
+    tryRun('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd })
   ])
-  return { repo: basename(root), root, branch, sha, dirty: Boolean(dirty) }
+  const repo = common && basename(common) === '.git' ? basename(dirname(common)) : basename(root)
+  return { repo, root, branch, sha, dirty: Boolean(dirty) }
 }
 
 /** The open PR of the current branch, when gh knows one. */

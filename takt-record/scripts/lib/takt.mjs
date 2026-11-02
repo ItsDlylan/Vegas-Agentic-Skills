@@ -4,9 +4,10 @@
  * tightened, and the video rendered. Then the other way: the notes the user draws on that video, told in terms of
  * the page they were about.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { clock, sleep } from './util.mjs'
 
 /** Takt's API address and token, from the file the running app writes. */
@@ -23,7 +24,85 @@ export function endpoint({ taktHome } = {}) {
       throw new Error(`Takt is not running (${file} is left from an earlier run). Open Takt, then run this again.`)
     }
   }
-  return ep
+  return { ...ep, file }
+}
+
+/**
+ * Takt's API works on the project open in its window, so two agents handing off at once would put one take's footage,
+ * graphics and render in the other's project. Every conversation with a Takt holds its lock (one per Takt, under
+ * ~/Movies/Takt QA/.locks) from opening the project to the last call; the others wait their turn. Recording never
+ * waits. A holder whose process is gone, or that has held it longer than any real hand-off, is pushed out.
+ */
+async function holdingTakt(ep, label, log, work, { maxHoldMs = 40 * 60_000, maxWaitMs = 4 * 60 * 60_000 } = {}) {
+  const dir = join(homedir(), 'Movies', 'Takt QA', '.locks')
+  mkdirSync(dir, { recursive: true })
+  const lock = join(dir, `takt-${createHash('sha1').update(ep.file).digest('hex').slice(0, 12)}`)
+  const ownerFile = join(lock, 'owner.json')
+  const me = { pid: process.pid, label, since: new Date().toISOString() }
+  let said = ''
+  for (const end = Date.now() + maxWaitMs; ; await sleep(2500 + Math.random() * 1000)) {
+    try {
+      mkdirSync(lock)
+      writeFileSync(ownerFile, JSON.stringify(me))
+      break
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
+    }
+    const holder = lockHolder(lock, ownerFile, maxHoldMs)
+    if (!holder) {
+      rmSync(lock, { recursive: true, force: true })
+      continue
+    }
+    if (Date.now() > end) throw new Error(`Takt has been busy with other takes for ${clock(maxWaitMs)}; send this one later with: send <bundle>`)
+    const line = `Waiting for Takt: it is handing off "${holder.label}" (pid ${holder.pid}, since ${new Date(holder.since).toLocaleTimeString('en-US')})`
+    if (line !== said) log(line)
+    said = line
+  }
+
+  const release = () => {
+    try {
+      const owner = JSON.parse(readFileSync(ownerFile, 'utf8'))
+      if (owner.pid === me.pid && owner.since === me.since) rmSync(lock, { recursive: true, force: true })
+    } catch {
+      // Already gone, or pushed out as stale and taken by another take: not ours to remove.
+    }
+  }
+  const onSignal = (signal) => {
+    release()
+    process.exit(signal === 'SIGINT' ? 130 : 143)
+  }
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP']
+  process.on('exit', release)
+  for (const s of signals) process.on(s, onSignal)
+  try {
+    return await work()
+  } finally {
+    release()
+    process.off('exit', release)
+    for (const s of signals) process.off(s, onSignal)
+  }
+}
+
+/** Who holds the lock, or null when it is stale: the holder's process is gone or it has held it too long. */
+function lockHolder(lock, ownerFile, maxHoldMs) {
+  let owner
+  try {
+    owner = JSON.parse(readFileSync(ownerFile, 'utf8'))
+  } catch {
+    // Taken a moment ago and its owner not written yet; or left behind by a crash between the two.
+    try {
+      return Date.now() - statSync(lock).mtimeMs < 30_000 ? { pid: '?', label: 'another take', since: new Date().toISOString() } : null
+    } catch {
+      return null
+    }
+  }
+  if (Date.now() - Date.parse(owner.since) > maxHoldMs) return null
+  try {
+    process.kill(owner.pid, 0)
+    return owner
+  } catch (err) {
+    return err.code === 'EPERM' ? owner : null
+  }
 }
 
 export function client(ep) {
@@ -52,8 +131,12 @@ export function projectName(events) {
 
 export async function send(bundle, { taktHome, render = true, log = console.log } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
-  const api = client(endpoint({ taktHome }))
+  const ep = endpoint({ taktHome })
   const name = projectName(events)
+  return holdingTakt(ep, name, log, () => handOff(bundle, events, client(ep), name, { render, log }))
+}
+
+async function handOff(bundle, events, api, name, { render, log }) {
   const { project, created } = await api('project/open', { name })
   log(`${created ? 'Made' : 'Opened'} the Takt project "${project.name}"`)
 
@@ -102,12 +185,50 @@ export async function send(bundle, { taktHome, render = true, log = console.log 
   let video = null
   if (render) {
     const { job } = await api('render/start', { quality: 'final' })
-    video = await waitForRender(api, job.id, log)
+    video = fileUnderRepo(await waitForRender(api, job.id, log), events.git?.repo, name, log)
     log(`Rendered ${video}`)
   }
   const handoff = { project: project.name, projectDir: project.dir, sourceId: imported.sources[0]?.sourceId, video, sentAt: new Date().toISOString() }
   writeFileSync(join(bundle, 'takt.json'), `${JSON.stringify(handoff, null, 2)}\n`)
   return handoff
+}
+
+/**
+ * Takt writes a render to <exports root>/<project name>/ and its API takes no folder, so every repo's takes would sit
+ * side by side with the user's other projects. Moves the video (and its .srt) to <exports root>/<repo>/<branch or
+ * PR>/ instead, and removes Takt's folder once it is empty. A render from Takt's own Render tab still goes to Takt's
+ * folder.
+ */
+export function fileUnderRepo(video, repo, name, log = () => {}) {
+  if (!video || !repo) return video
+  const take = name.startsWith(`${repo} `) || name.startsWith(`${repo}:`) ? name.slice(repo.length).replace(/^[\s:]+/, '') : name
+  const dir = join(dirname(dirname(video)), folderName(repo), folderName(take))
+  if (dirname(video) === dir) return video
+  mkdirSync(dir, { recursive: true })
+  const from = dirname(video)
+  const stem = basename(video, extname(video))
+  for (const file of readdirSync(from)) {
+    if (file === basename(video) || file.startsWith(`${stem}.`)) renameSync(join(from, file), join(dir, file))
+  }
+  try {
+    rmdirSync(from)
+  } catch {}
+  log(`Filed it under ${dir}`)
+  return join(dir, basename(video))
+}
+
+/** A name as one folder name, the way Takt makes its export folders (exports.ts exportFolderName). */
+function folderName(name) {
+  return (
+    String(name)
+      // eslint-disable-next-line no-control-regex
+      .replace(/[/\\:\u0000-\u001f\u007f]+/g, '-')
+      .replace(/\s+/g, ' ')
+      .replace(/^[.\s-]+/, '')
+      .trim()
+      .slice(0, 100)
+      .trim() || 'Untitled'
+  )
 }
 
 /**
@@ -158,7 +279,11 @@ async function waitForRender(api, jobId, log, timeoutMs = 20 * 60_000) {
 /** The open notes on the take's video, each placed back on the page: which beat, what was on screen, what was near. */
 export async function notes(bundle, { taktHome, all = false } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
-  const api = client(endpoint({ taktHome }))
+  const ep = endpoint({ taktHome })
+  return holdingTakt(ep, projectName(events), console.error, () => readNotes(bundle, events, client(ep), all))
+}
+
+async function readNotes(bundle, events, api, all) {
   await api('project/open', { name: projectName(events), create: false })
   const { notes: list } = await api('notes/list', { all })
   const out = []
@@ -208,7 +333,10 @@ function placeOn(events, ms, marks = []) {
 
 export async function noteDone(bundle, noteId, summary, { taktHome } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
-  const api = client(endpoint({ taktHome }))
-  await api('project/open', { name: projectName(events), create: false })
-  return api('note/done', { noteId, summary })
+  const ep = endpoint({ taktHome })
+  const api = client(ep)
+  return holdingTakt(ep, projectName(events), console.error, async () => {
+    await api('project/open', { name: projectName(events), create: false })
+    return api('note/done', { noteId, summary })
+  })
 }

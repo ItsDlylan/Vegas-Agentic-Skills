@@ -80,7 +80,9 @@ label: they read like the UI and survive refactors.
 cursor presses it and the option is picked), `{ "press": "Enter" }` or
 `"Meta+k"` (shortcuts show as a key chip), `{ "scroll": t }` or `{ "scroll": 600 }`, `{ "goto": "/path" }`,
 `{ "wait": 800 }`, `{ "waitFor": t }`, `{ "waitForUrl": "/done" }`. Add `"at": "a phrase of the line"` to an action to
-make it land as that phrase is said; without it, actions follow each other at a natural pace.
+make it land as that phrase is said; without it, actions follow each other at a natural pace. A click or hover first checks
+that nothing is in front of its target: if something stays there, the beat fails and names it, so a click never lands on an
+overlay unnoticed.
 
 **Checks:** `{ "see": t }`, `{ "notSee": t }`, `{ "url": "part" }`, `{ "value": t, "is" | "has": "…" }`,
 `{ "text": t, "is" | "has": "…" }`, `{ "count": t, "is" | "atLeast" | "atMost": n }`. Each retries for up to 4 s
@@ -98,6 +100,14 @@ make it land as that phrase is said; without it, actions follow each other at a 
 - The voice is the best installed English one: a Premium or Enhanced voice when there is one (System Settings →
   Accessibility → Spoken Content → System voice → Manage Voices), else Samantha.
 
+## Several agents at once
+
+Takt's API works on the project open in its window, so hand-offs to one Takt go one at a time: `run` (its send part),
+`send`, `notes` and `note-done` take that Takt's lock (`~/Movies/Takt QA/.locks/`) and print "Waiting for Takt: it is
+handing off ..." while another take holds it. Recording never waits. A queue can outlast a 10-minute tool timeout, so
+when other agents are recording, start `run` in the background, or `record` now and `send <bundle>` later. Never
+delete the lock to jump the queue: a holder that crashed is pushed out by itself.
+
 ## Someone else's browser
 
 `--cdp <port|ws url> --page <part of its URL>` records a browser that is already open (an AgentCanvas tile, a
@@ -109,6 +119,12 @@ back after. Everything else is the same.
 `~/Movies/Takt QA/<repo>/<pr-N or branch>/<time>/` (or `--out`): `screen.mp4` (1080p30 H.264, the voice at -16 LUFS),
 `narration.wav`, `events.json` (every beat, action and check with its time and on-screen box, every page visited),
 `take.json`, and after `send`, `takt.json` (the project and the rendered video). `notes` adds `notes.json`.
+`<repo>` is the main checkout's folder name, also from a worktree. Takt keeps reading the recording from the bundle,
+so never move a bundle.
+
+The rendered video goes to `~/Movies/Takt/<repo>/<pr-N title or branch>/export-<time>.mp4` (with its `.srt`):
+Takt writes it to `~/Movies/Takt/<project name>/` and `send` moves it there, so each repo's videos sit apart from
+other projects'. A render started from Takt's own Render tab stays in Takt's folder.
 
 ## Needs
 

@@ -239,6 +239,16 @@ export function overlay(config) {
     count(target) {
       return all(target).filter(visible).length
     },
+    /** What is in front of the target at this point, in words; null when a click here reaches it. */
+    covering(target, x, y) {
+      const node = find(target) ?? all(target).find(laidOut)
+      const top = document.elementsFromPoint(x, y).find((hit) => !inOverlay(hit))
+      if (!node || !top) return top ? null : 'the edge of the window'
+      // A label is pressed for its own field, and a page can turn clicks off on the words inside a button.
+      if (node.contains(top) || top.contains(node) || top.closest('label')?.control === node) return null
+      const named = ['id', ...top.getAttributeNames().filter((a) => a.startsWith('data-') || a === 'role' || a === 'aria-label')].find((a) => top.getAttribute(a))
+      return `<${top.tagName.toLowerCase()}${named ? ` ${named}="${top.getAttribute(named)}"` : ''}>`
+    },
     /**
      * Scrolls what holds the target (and then the page, when that is not enough) so it sits a third of the way down.
      * A target the page only shows once it is scrolled to is scrolled to all the same, and given once it shows.

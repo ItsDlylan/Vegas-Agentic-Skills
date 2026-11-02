@@ -150,9 +150,26 @@ export class Driver {
     return { x: box.x + box.width / 2 + jx, y: box.y + box.height / 2 + jy }
   }
 
+  /**
+   * Where a click reaches the target: the hand's aim, else the middle or a quarter of the way in. Something over all of
+   * them is given a moment (a menu closing, a toast), then named, so a click is never pressed into the wrong thing.
+   */
+  async clearAim(target, box) {
+    const at = (fx, fy) => ({ x: box.x + box.width * fx, y: box.y + box.height * fy })
+    let over = null
+    for (const end = Date.now() + 2000; ; await sleep(150)) {
+      for (const p of [this.aim(box), at(0.5, 0.5), at(0.25, 0.5), at(0.75, 0.5), at(0.5, 0.25), at(0.5, 0.75)]) {
+        over = await this.takt('covering', target, p.x, p.y)
+        if (!over) return p
+      }
+      if (Date.now() > end) break
+    }
+    throw new Error(`Cannot reach ${target}: ${over} is in front of it on ${await this.url()}`)
+  }
+
   async click(target) {
     const box = await this.reveal(target)
-    const p = this.aim(box)
+    const p = await this.clearAim(target, box)
     await this.moveTo(p.x, p.y, Math.min(box.width, box.height))
     await sleep(this.fast ? 0 : 130 + this.random() * 80)
     await this.mouse('mousePressed', this.at.x, this.at.y, { clickCount: 1, buttons: 1 })
@@ -164,7 +181,7 @@ export class Driver {
 
   async hover(target) {
     const box = await this.reveal(target)
-    const p = this.aim(box)
+    const p = await this.clearAim(target, box)
     await this.moveTo(p.x, p.y, Math.min(box.width, box.height))
     await sleep(this.fast ? 50 : 450)
     return box
