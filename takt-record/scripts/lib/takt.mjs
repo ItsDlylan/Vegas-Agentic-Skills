@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
-import { clock, sleep } from './util.mjs'
+import { clock, lower, sleep } from './util.mjs'
 
 /** Takt's API address and token, from the file the running app writes. */
 export function endpoint({ taktHome } = {}) {
@@ -129,14 +129,14 @@ export function projectName(events) {
   return `${repo}: ${events.git?.branch ?? events.title}`.slice(0, 120)
 }
 
-export async function send(bundle, { taktHome, render = true, log = console.log } = {}) {
+export async function send(bundle, { taktHome, render = true, tighten = true, log = console.log } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
   const ep = endpoint({ taktHome })
   const name = projectName(events)
-  return holdingTakt(ep, name, log, () => handOff(bundle, events, client(ep), name, { render, log }))
+  return holdingTakt(ep, name, log, () => handOff(bundle, events, client(ep), name, { render, tighten, log }))
 }
 
-async function handOff(bundle, events, api, name, { render, log }) {
+async function handOff(bundle, events, api, name, { render, tighten = true, log }) {
   const { project, created } = await api('project/open', { name })
   log(`${created ? 'Made' : 'Opened'} the Takt project "${project.name}"`)
 
@@ -159,23 +159,27 @@ async function handOff(bundle, events, api, name, { render, log }) {
       atMs: first + 100,
       durationMs: 3500
     },
+    ...sectionGraphics(events),
     ...checkCallouts(checks)
   ]
   const last = beats.at(-1)
   if (checks.length && last) {
+    const parts = (events.sections ?? []).length > 1 ? events.sections.map((sec) => `${lower(sec.label)}: ${sec.passed} of ${sec.total}`).join(' · ') : null
     graphics.push({
       kind: 'chapter',
       title: `${passed} of ${checks.length} checks passed`,
-      subtitle: [git?.sha?.slice(0, 7), new Date(events.recordedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · '),
+      subtitle: [parts, git?.sha?.slice(0, 7), new Date(events.recordedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })].filter(Boolean).join(' · '),
       atMs: Math.max(first, last.voiceEndMs - 2500),
       durationMs: 3500
     })
   }
   for (const g of graphics) await api('graphic/add', g)
-  log(`Added ${graphics.length} graphics: the title, ${checks.length} checks and the end card`)
+  log(`Added ${graphics.length} graphics: the title, ${(events.sections ?? []).length ? 'the before and after labels, ' : ''}${checks.length} checks and the end card`)
 
-  const words = await waitForWords(api, log)
-  if (words) {
+  const words = tighten && (await waitForWords(api, log))
+  if (!tighten) {
+    log('Left the waits in (--no-tighten)')
+  } else if (words) {
     const t = await api('footage/tighten', { longerThanMs: 1500, keepMs: 700 })
     log(`Tightened ${t.pauses + t.deadAir} waits (${(t.removedMs / 1000).toFixed(1)} s out)`)
   } else {
@@ -184,7 +188,7 @@ async function handOff(bundle, events, api, name, { render, log }) {
 
   let video = null
   if (render) {
-    const { job } = await api('render/start', { quality: 'final' })
+    const { job } = await api('render/start', { quality: 'final', captions: true })
     video = fileUnderRepo(await waitForRender(api, job.id, log), events.git?.repo, name, log)
     log(`Rendered ${video}`)
   }
@@ -229,6 +233,26 @@ function folderName(name) {
       .slice(0, 100)
       .trim() || 'Untitled'
   )
+}
+
+/**
+ * Which code is on screen: a badge that stays up top left through each section ("Before this PR · develop 1a2b3c4",
+ * then "With this PR · its branch"), and a card at the cut into the PR, so the viewer always knows which they are
+ * watching. A take that had nothing to show from before says why on a card after the title.
+ */
+function sectionGraphics(events) {
+  const out = []
+  const sections = events.sections ?? []
+  for (const [i, sec] of sections.entries()) {
+    const where = [sec.ref, sec.sha?.slice(0, 7)].filter(Boolean).join(' ')
+    out.push({ kind: 'badge', title: [sec.label, where].filter(Boolean).join(' · ').slice(0, 500), position: 'top-left', atMs: sec.startMs, durationMs: Math.max(1, sec.endMs - sec.startMs) })
+    if (i > 0) out.push({ kind: 'chapter', title: sec.label, subtitle: where || undefined, atMs: sec.startMs + 100, durationMs: 2500 })
+  }
+  if (events.beforeSkipped) {
+    const first = events.beats[0]?.startMs ?? 0
+    out.push({ kind: 'chapter', title: 'Nothing to show from before', subtitle: events.beforeSkipped.slice(0, 500), atMs: first + 3700, durationMs: 3000 })
+  }
+  return out
 }
 
 /**
@@ -328,7 +352,7 @@ function placeOn(events, ms, marks = []) {
       .find((a) => cx >= a.box.x - 12 && cx <= a.box.x + a.box.width + 12 && cy >= a.box.y - 12 && cy <= a.box.y + a.box.height + 12)
     return { label: m.label, kind: m.kind, pagePx: box, ...(hit ? { target: hit.target } : {}) }
   })
-  return { beat: beat ? { n: beat.n, say: beat.say } : null, url, lastAction: recent ? { kind: recent.kind, target: recent.target, atMs: recent.startMs } : null, marks: onPage }
+  return { beat: beat ? { n: beat.n, say: beat.say, ...(beat.section ? { section: beat.section } : {}) } : null, url, lastAction: recent ? { kind: recent.kind, target: recent.target, atMs: recent.startMs } : null, marks: onPage }
 }
 
 export async function noteDone(bundle, noteId, summary, { taktHome } = {}) {

@@ -66,7 +66,7 @@ export async function gitInfo(cwd) {
 
 /** The open PR of the current branch, when gh knows one. */
 export async function prInfo(cwd) {
-  const out = await tryRun('gh', ['pr', 'view', '--json', 'number,title,url'], { cwd, timeout: 15_000 })
+  const out = await tryRun('gh', ['pr', 'view', '--json', 'number,title,url,baseRefName'], { cwd, timeout: 15_000 })
   try {
     return out ? JSON.parse(out) : null
   } catch {
@@ -80,6 +80,9 @@ export const slug = (s) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 60) || 'take'
+
+/** "Before this PR" → "before this PR": only the first letter, so names keep their capitals. */
+export const lower = (s) => s.charAt(0).toLowerCase() + s.slice(1)
 
 /** 83 000 → "1:23". */
 export const clock = (ms) => {
