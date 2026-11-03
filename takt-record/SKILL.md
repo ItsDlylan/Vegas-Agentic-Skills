@@ -1,6 +1,6 @@
 ---
 name: takt-record
-description: Records a narrated, checked video of a web app working, then hands it to Takt (the user's video editor) to title, tighten and render, so the user can verify the work by watching it. Use when the user asks for a video, recording, walkthrough, demo or "show me it working" of a change, PR or feature in a browser, says "record your browser", "verify in Takt" or "QA video", or when they review your notes on such a video in Takt.
+description: Records a narrated, checked video of a web app working (first as it was before the change, then with it), then hands it to Takt (the user's video editor) to title, tighten and render, so the user can verify the work by watching it. Use when the user asks for a video, recording, walkthrough, demo or "show me it working" of a change, PR or feature in a browser, says "record your browser", "verify in Takt" or "QA video", or when they review your notes on such a video in Takt.
 ---
 
 # Takt record
@@ -9,6 +9,10 @@ A take is a short script: what to say, what to do in the browser, and what must 
 it in a real Chromium with a drawn cursor that moves like a hand, says each line with macOS `say`, checks each claim
 on screen (outlined green or red), and writes a 1080p video. `send` puts it in the PR's own Takt project with a title
 card, a callout for every check and an end card ("6 of 7 checks passed"), cuts the long waits, and renders it.
+
+Every take has two parts: **before**, the app as the base branch has it, showing what was missing or broken; then
+**with this PR**, the same ground with the change. The viewer sees the limitation first, so they can judge how much
+the PR adds. A badge in the top left says which code is on screen throughout, and a card marks the cut.
 
 ```bash
 R=~/.claude/skills/takt-record/scripts/takt-record.mjs
@@ -24,16 +28,21 @@ Run it from the repo of the change: the bundle and the Takt project are named af
 ## The loop
 
 1. **Know what to prove.** Read the PR, the diff, the acceptance criteria. Each behaviour the user would check by hand
-   becomes one beat.
-2. **Explore first, off camera.** Use `agent-browser` (your own `--session`; never `close --all`) to walk the flow and
-   read `snapshot` for the words on buttons and fields. Takes use those words, not `@e` refs.
-3. **Write the take** in your scratchpad (format below).
-4. **Rehearse** until every target is found and every check passes for the right reason. A check that fails in
-   rehearsal is either a bug you shipped (fix the code) or a wrong check (fix the take). Never weaken a check to make
-   it pass.
-5. **Run.** Exit 1 means a check failed on camera. The video still renders and shows the ✗: report it, do not hide it.
-6. **Tell the user** the video path, the Takt project name, and the checks line. Their Takt window shows the project.
-7. **Notes.** When the user says they left notes, run `notes`: each comes with the beat, the page URL, the last thing
+   becomes one beat. Then ask what the user saw before it: the bug, the missing button, the dead end, the extra steps.
+   That is the before section.
+2. **Find a site on the base branch.** The before section must run the old code: the branch the PR merges into (or
+   the branch a stacked PR sits on). Use a worktree of it, staging, or the main checkout when it is on that branch and
+   clean. Never the PR's own site; the recorder refuses one on the same origin as `url` (see `sameSite`).
+3. **Explore first, off camera,** on both sites. Use `agent-browser` (your own `--session`; never `close --all`) to
+   walk the flow and read `snapshot` for the words on buttons and fields. Takes use those words, not `@e` refs.
+4. **Write the take** in your scratchpad (format below).
+5. **Rehearse** until every target is found and every check passes for the right reason. A check that fails in
+   rehearsal is either a bug you shipped (fix the code), a wrong check (fix the take), or, in the before section, a
+   limitation the base branch doesn't have (say so: maybe the PR isn't needed). Never weaken a check to make it pass.
+6. **Run.** Exit 1 means a check failed on camera. The video still renders and shows the ✗: report it, do not hide it.
+7. **Tell the user** the video path, the Takt project name, and the checks line (it splits before and with this PR).
+   Their Takt window shows the project.
+8. **Notes.** When the user says they left notes, run `notes`: each comes with the beat, the page URL, the last thing
    done and what each drawn mark was on. Fix them, `note-done` each with one sentence, then take again.
 
 ## Take format
@@ -45,6 +54,17 @@ Run it from the repo of the change: the bundle and the Takt project are named af
   "setup": [{ "type": "label=Email", "text": "qa@example.com" }, { "type": "label=Password", "text": "password" }, { "press": "Enter" }, { "waitForUrl": "/dashboard" }, { "goto": "/cards" }],
   "hide": [".cookie-banner"],
   "redact": ["[data-email]"],
+  "before": {
+    "url": "https://shop-main.test/cards",
+    "ref": "main",
+    "beats": [
+      {
+        "say": "Before this change, search for Pikachu, then filter to rare cards. The search is thrown away.",
+        "do": [{ "type": "label=Search cards", "text": "Pikachu", "at": "Pikachu" }, { "click": "text=Rare", "at": "rare cards" }],
+        "check": [{ "value": "label=Search cards", "is": "", "label": "Search box emptied" }, { "count": ".card", "atLeast": 20, "label": "Every rare card, not just Pikachu" }]
+      }
+    ]
+  },
   "beats": [
     {
       "say": "Search for Pikachu, and the grid narrows to the matching cards.",
@@ -62,6 +82,15 @@ Run it from the repo of the change: the bundle and the Takt project are named af
 
 - `title` becomes the title card. `url` is opened first; `goto` paths are relative to it.
 - `setup` runs before recording starts, off camera: logins, seeding through the UI, closing a banner.
+- `before` (required) plays first. `url` is a site on the base branch; its `goto` paths are relative to it. `setup`
+  defaults to the take's own (same login steps, other site) and runs off camera too. `ref` is the base branch for the
+  badge (default: the PR's base from `gh`, else none). `beats` are ordinary beats. Between the two parts the
+  recording pauses while the PR's `setup` runs, so the cut is clean.
+  - `"sameSite": true` lets `before.url` be the PR's own site, only when `before.setup` truly turns the old behaviour
+    back on (a feature flag off). Otherwise the "before" would show the change.
+  - `{ "skip": "why" }` instead, only when nothing on screen existed or changed before (a new background job with no
+    screen). The reason goes on a card after the title. A brand-new page still has a before: where the user went
+    without it.
 - `hide` (`visibility: hidden`) and `redact` (blurred) take CSS selectors. Laravel Debugbar and Symfony's toolbar are
   hidden already; error overlays are not, since they are findings.
 - Optional: `viewport` (`[1600, 900]` default, any 16:9), `voice` (a `say -v '?'` name), `rate` (185 words a minute),
@@ -90,8 +119,13 @@ overlay unnoticed.
 
 ## Making it good
 
-- **One beat per behaviour**, 10 to 20 seconds each, 60 to 120 seconds in all. Lead with the change itself; skip the
-  login (that is what `setup` is for).
+- **Before: the limitation, briefly.** One to three beats, 15 to 40 seconds: walk the same path the PR's beats walk
+  and stop where it falls short: the error, the empty box, the missing button, the six clicks it took. Its checks
+  prove the limitation ("Search box emptied", `notSee` "Load more"), so the viewer sees it is real, not narrated.
+- **With this PR: the same ground, then the rest.** Open the PR's part by repeating the before section's path, so the
+  difference is side by side, then show what else it adds and its edge cases.
+- **One beat per behaviour**, 10 to 20 seconds each, 75 to 150 seconds in all. Skip the login (that is what `setup`
+  is for).
 - **The line says what is about to happen and why it matters**, in the present tense: "Filter to rare cards. The
   search term stays." Not "I'm going to click the rare button". Under 25 words a beat.
 - **Anchor the key click** with `at` to the word that names it, so the screen and the voice agree.
@@ -99,6 +133,12 @@ overlay unnoticed.
 - **Show the edge case** the PR fixed, not just the happy path: the empty state, the error message, the second visit.
 - The voice is the best installed English one: a Premium or Enhanced voice when there is one (System Settings →
   Accessibility → Spoken Content → System voice → Manage Voices), else Samantha.
+
+## When Takt's render fails
+
+`ffmpeg (footage) failed ... h264_videotoolbox ... Could not open encoder before EOF` on one take every time is Takt
+splitting a tightened timeline into a piece with no frames. Send it again with the waits left in:
+`send <bundle> --no-tighten`. The video is longer by the waits; the checks and voice are the same.
 
 ## Several agents at once
 
@@ -117,7 +157,8 @@ back after. Everything else is the same.
 ## What a bundle holds
 
 `~/Movies/Takt QA/<repo>/<pr-N or branch>/<time>/` (or `--out`): `screen.mp4` (1080p30 H.264, the voice at -16 LUFS),
-`narration.wav`, `events.json` (every beat, action and check with its time and on-screen box, every page visited),
+`narration.wav`, `events.json` (every beat, action and check with its time, section and on-screen box, every page
+visited, and `sections`: where before and with this PR start and end, their branch, commit and checks),
 `take.json`, and after `send`, `takt.json` (the project and the rendered video). `notes` adds `notes.json`.
 `<repo>` is the main checkout's folder name, also from a worktree. Takt keeps reading the recording from the bundle,
 so never move a bundle.
