@@ -23,6 +23,10 @@ Specifics come from the code, the docs, or the user. If you lack the fact that w
 - **Swap test.** Put a competitor's name in the line. If it is still true, add the fact that makes it false for them, or cut the line.
 - **Subject line test.** A heading should work as an email subject: it tells the reader what is underneath before they read it.
 
+## Examples
+
+Before rewriting more than a single line, read `references/examples.md`. It has a full before and after for a landing page section, a README intro, and a demo script. Take the method from the examples and the wording from your own source.
+
 ## Done when
 
 Every heading and tagline in scope passes both tests, and no rewrite states something the source did not.
