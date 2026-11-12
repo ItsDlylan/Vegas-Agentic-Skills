@@ -20,6 +20,8 @@ echo $AGENT_CANVAS_TERMINAL_ID
 
 Both must be set. If not, fall back to the standard `/tier2` skill.
 
+**Canvas API request rules.** Every request with a body must send `-H 'Content-Type: application/json'`; anything else is refused with 415. Requests that come from a web page (an `Origin` header, or a cross-site `Sec-Fetch-Site`) or that are addressed to a host other than `127.0.0.1`/`localhost` are refused with 403. curl, scripts and the AgentCanvas MCP server send none of those headers, so they work as long as they send JSON.
+
 ## When This Skill Is Invoked
 
 1. **Ask for the feature/branch name** if not provided as an argument

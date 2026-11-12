@@ -29,6 +29,8 @@ All three must be set. If not, this skill won't work — fall back to the standa
 3. You run `npx agent-browser connect $CDP_PORT` then commands auto-target the canvas tile
 4. The user sees every action live and can interact with the browser manually at the same time
 
+**Canvas API request rules.** Every request with a body must send `-H 'Content-Type: application/json'`; anything else is refused with 415. Requests that come from a web page (an `Origin` header, or a cross-site `Sec-Fetch-Site`) or that are addressed to a host other than `127.0.0.1`/`localhost` are refused with 403. curl, scripts and the AgentCanvas MCP server send none of those headers, so they work as long as they send JSON.
+
 ## ▶️ When Invoked: Required First Steps (do these IN ORDER)
 
 These guarantee you target **your** terminal's tile and never collide with another agent's browser on the shared daemon. Skipping them is how you end up driving — and logging out — someone else's session.
@@ -95,7 +97,7 @@ npx agent-browser $S fill @e10 "..."
 1. **Just `connect`.** `npx agent-browser connect $CDP_PORT` re-points the daemon at your tile on its own — you do NOT need to close anything first.
 2. **Pass `--cdp` on every command.** `npx agent-browser --cdp $CDP_PORT snapshot -i` talks only to YOUR tile and never touches the shared default session, so it can't disturb another agent.
 3. **Use an isolated named session** when the daemon is stuck on another agent's tile: `npx agent-browser --cdp $CDP_PORT --session mytile-$$ <cmd>` (see "Recovery" above). This replaces every reason you might reach for `close --all`.
-4. **Close one specific tile by id**, never all of them: `curl -s -X POST $AGENT_CANVAS_API/api/browser/close -d '{"sessionId":"<your-sessionId>"}'`.
+4. **Close one specific tile by id**, never all of them: `curl -s -X POST $AGENT_CANVAS_API/api/browser/close -H 'Content-Type: application/json' -d '{"sessionId":"<your-sessionId>"}'`.
 
 This rule overrides any `close --all` shown in the examples below — those are legacy and must not be copied verbatim.
 
