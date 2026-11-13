@@ -269,7 +269,7 @@ agent-browser network requests --filter api    # Filter requests
 ```bash
 agent-browser tab                 # List tabs
 agent-browser tab new [url]       # New tab
-agent-browser tab 2               # Switch to tab
+agent-browser tab t2              # Switch to tab by id (t1, t2) or label; a bare 2 is rejected
 agent-browser tab close           # Close tab
 agent-browser window new          # New window
 ```
