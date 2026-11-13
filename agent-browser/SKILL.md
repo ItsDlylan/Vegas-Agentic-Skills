@@ -42,7 +42,7 @@ Task({
    \`\`\`
    Find the element refs you need (search box is usually @e7).
 
-2. **Plan the exact Bash commands** for the task.
+2. **Plan the exact Bash commands** for the task. Get each session name once with \`agent-browser session id --scope worktree --prefix verify-1\` (then \`verify-2\`) and use the printed names, such as \`verify-1-599077adab4a\`, in place of \`verify-1\` and \`verify-2\` below. A name used again in the same checkout starts logged in. If \`get url\` shows the login page, add the login commands from "Keep the login between runs with --restore".
 
 3. **CRITICAL - Spawn TWO Haiku agents IN PARALLEL:**
 
@@ -63,7 +63,7 @@ Task({
 **Haiku prompt template** (give EXPLICIT commands, not goals):
 \`\`\`
 Run these exact Bash commands in order. Use the Bash tool for each one:
-1. \`agent-browser --headed --session verify-1 open <url>\`
+1. \`agent-browser --headed --session verify-1 --restore --restore-save always open <url>\`
 2. \`agent-browser --headed --session verify-1 snapshot -i\`
 3. \`agent-browser --headed --session verify-1 fill @e7 "<search>"\`
 4. \`agent-browser --headed --session verify-1 press Enter\`
@@ -110,6 +110,7 @@ agent-browser --headed --session <unique-name> <command>
 
 - `--headed` - Shows the browser window so the user can watch
 - `--session <name>` - Isolates this browser from other agents (use a unique name like your task)
+- `--restore --restore-save always` - Keeps the login between runs for pages behind login (see "Keep the login between runs with --restore")
 
 ## Quick start
 
@@ -307,23 +308,43 @@ agent-browser --headed --session form-test snapshot -i  # Check result
 agent-browser --headed --session form-test close        # Always close when done!
 ```
 
-## Example: Authentication with saved state
+## Keep the login between runs with --restore
 
-```bash
-# Login once
-agent-browser --headed --session login-flow open https://app.example.com/login
-agent-browser --headed --session login-flow snapshot -i
-agent-browser --headed --session login-flow fill @e1 "username"
-agent-browser --headed --session login-flow fill @e2 "password"
-agent-browser --headed --session login-flow click @e3
-agent-browser --headed --session login-flow wait --url "**/dashboard"
-agent-browser --headed --session login-flow state save auth.json
-agent-browser --headed --session login-flow close
+`--restore` saves the session's cookies and localStorage under its name and loads them on the next launch, so an agent logs in to an app once per checkout instead of on every run.
 
-# Later sessions: load saved state
-agent-browser --headed --session dashboard-test state load auth.json
-agent-browser --headed --session dashboard-test open https://app.example.com/dashboard
-```
+1. Get a stable session name once and paste the printed value into every command. Run it from the checkout you are testing:
+
+   ```bash
+   agent-browser session id --scope worktree --prefix verify   # prints e.g. verify-599077adab4a
+   ```
+
+   Each git worktree gets its own name. Use the same prefix every time so the saved login is found. Two agents running at the same time in one checkout need different prefixes (`verify-1`, `verify-2`), and each logs in once on its first run. Don't build names from `$$` or shell variables. `$$` changes between Bash calls, which loses the login, and the session cleanup hook (`hooks/close-agent-browser-sessions.sh`) only closes names written out literally.
+
+2. Open a page behind login with restore on and check where you landed:
+
+   ```bash
+   agent-browser --headed --session verify-599077adab4a --restore --restore-save always open https://app.example.com/dashboard
+   agent-browser --headed --session verify-599077adab4a get url
+   ```
+
+3. If you landed on the login page, log in once in the same session. Tick "remember me" if the form has one, because a remember-me cookie usually outlives the server's session cookie. The last command waits until the page leaves `/login`:
+
+   ```bash
+   agent-browser --headed --session verify-599077adab4a snapshot -i
+   agent-browser --headed --session verify-599077adab4a fill @e1 "<test user>"
+   agent-browser --headed --session verify-599077adab4a fill @e2 "<test password>"
+   agent-browser --headed --session verify-599077adab4a press Enter
+   agent-browser --headed --session verify-599077adab4a wait --fn "!location.pathname.startsWith('/login')"
+   ```
+
+   The login is saved on `close`, when the cleanup hook or the idle timeout closes the session, and every 30 seconds while the browser is open. Saved state is plain text under `~/.agent-browser/sessions/` unless `AGENT_BROWSER_ENCRYPTION_KEY` is set, so use test accounts.
+
+Rules from testing restore with agent-browser 0.43:
+
+- Always pass `--restore-save always`. A saved login can go stale. With the default policy, logging in again after that is never saved (`save: skipped_restore_failed`), so every later run lands on the login page.
+- Each command prints a `restore:` line on stderr. `missing` means nothing was saved yet, `loaded` means the saved state was applied, and `loaded_but_invalid` means a `--restore-check-url`, `--restore-check-text` or `--restore-check-fn` condition failed. All three exit 0, so decide with `get url`, not the exit code.
+- A login is saved per session name. `--restore <key>` under a different `--session` name does not reuse it.
+- Test logout and the login form in a throwaway session without `--restore`. Logging out in a restore session saves the logged-out state, and the next run has to log in again.
 
 ## Sessions (parallel browsers)
 
