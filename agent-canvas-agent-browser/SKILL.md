@@ -140,7 +140,7 @@ npx agent-browser --cdp $CDP_PORT get url   # sanity-check before acting
 npx agent-browser snapshot -i
 ```
 
-**IMPORTANT:** agent-browser uses a persistent daemon. You MUST run `connect <port>` to point the daemon at the canvas tile's CDP port. After connecting, all subsequent commands automatically use that port — do NOT pass `--cdp` on every command.
+**IMPORTANT:** agent-browser uses a persistent daemon. You MUST run `connect <port>` to point the daemon at the canvas tile's CDP port. After connecting, later commands use that port without `--cdp`. The daemon exits after 1 hour without commands (`idleTimeout` in `~/.agent-browser/config.json`) and forgets the connection, so the next command without `--cdp` opens a blank local browser instead of your tile. If `get url` shows `about:blank` or a page you did not open, run `connect $CDP_PORT` again. Passing `--cdp $CDP_PORT` on every command avoids this, because `--cdp` reattaches by itself.
 
 **The CDP port from the response is authoritative.** Always parse it from the curl response.
 

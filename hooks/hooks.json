@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/skills/hooks/close-agent-browser-sessions.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/skills/hooks/close-agent-browser-sessions.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
