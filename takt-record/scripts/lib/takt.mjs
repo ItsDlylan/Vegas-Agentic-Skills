@@ -147,7 +147,44 @@ function lockHolder(lock, ownerFile, maxHoldMs) {
   }
 }
 
+/** How long a call waits for Takt to come back when it restarts mid-run (its line comes back with it). */
+const RESTART_WAIT_MS = 5 * 60_000
+/** Reads: safe to ask again when the answer was lost with the connection. */
+const READS = new Set(['status', 'routes', 'render/status', 'agent/wait', 'agent/reply', 'timeline/get'])
+/** True once a call of this run reached Takt: only then is a failure a restart and not "Takt is not open". */
+let reached = false
+
+/**
+ * After Takt restarts it listens on a new port with a new token, so a call that cannot reach it reads the endpoint file
+ * again and asks again, for up to five minutes. A change is asked again only when it cannot have arrived (connection
+ * refused, or the token was refused), so nothing is applied twice.
+ */
 export function client(ep) {
+  const once = callOnce(ep)
+  return async (route, body) => {
+    for (const since = Date.now(); ; ) {
+      try {
+        const json = await once(route, body)
+        reached = true
+        return json
+      } catch (e) {
+        const refused = e.cause?.code === 'ECONNREFUSED'
+        const lost = e instanceof TypeError && (body === undefined || READS.has(route))
+        if (!reached || !(refused || lost || e.status === 401) || Date.now() - since > RESTART_WAIT_MS) throw e
+        await sleep(2000)
+        const token = ep.token
+        try {
+          Object.assign(ep, JSON.parse(readFileSync(ep.file, 'utf8')))
+        } catch {
+          // Takt is not back yet.
+        }
+        if (e.status === 401 && ep.token === token) throw e
+      }
+    }
+  }
+}
+
+function callOnce(ep) {
   return async (route, body) => {
     const res = await fetch(`${ep.url}/api/storyboard/${route}`, {
       method: body === undefined ? 'GET' : 'POST',
@@ -159,6 +196,7 @@ export function client(ep) {
     if (json.code === 'NO_ROUTE') throw new Error(`This Takt has no ${route} route yet: update Takt (it came with storyboard_footage_import).`)
     const err = new Error(`Takt ${route}: ${json.error ?? `HTTP ${res.status}`}`)
     err.code = json.code
+    err.status = res.status
     throw err
   }
 }
