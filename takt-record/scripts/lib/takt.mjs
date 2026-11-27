@@ -27,16 +27,58 @@ export function endpoint({ taktHome } = {}) {
   return { ...ep, file }
 }
 
+const lockDir = (ep) => join(homedir(), 'Movies', 'Takt QA', '.locks', `takt-${createHash('sha1').update(ep.file).digest('hex').slice(0, 12)}`)
+
 /**
- * Takt's API works on the project open in its window, so two agents handing off at once would put one take's footage,
- * graphics and render in the other's project. Every conversation with a Takt holds its lock (one per Takt, under
- * ~/Movies/Takt QA/.locks) from opening the project to the last call; the others wait their turn. Recording never
- * waits. A holder whose process is gone, or that has held it longer than any real hand-off, is pushed out.
+ * After a hand-off made in the background, shows the take's project in Takt's window, where the user watches it and
+ * draws notes. It leaves the window alone while an agent that works through the window (an older script) holds the lock.
+ */
+async function showInWindow(ep, api, name, log) {
+  const lock = lockDir(ep)
+  const holder = existsSync(lock) ? lockHolder(lock, join(lock, 'owner.json'), 90 * 60_000) : null
+  if (holder) return log(`Takt's window is in use by "${holder.label}": open "${name}" from Takt's Home to watch it`)
+  await api('project/open', { name, create: false }).catch((err) => log(`Could not show "${name}" in Takt's window (${err.message}): open it from Takt's Home`))
+}
+
+/** From this API version Takt keeps the line itself: renders wait their turn in Takt, and every call names its project. */
+const QUEUE_API_VERSION = 5
+
+/** True when this Takt keeps the line itself. TAKT_LOCK=1 takes the lock whatever the version. */
+async function taktQueues(api) {
+  if (process.env.TAKT_LOCK === '1') return false
+  try {
+    return Number((await api('status')).app?.apiVersion) >= QUEUE_API_VERSION
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Opens the take's project and gives back a client for it. With a Takt that keeps the line itself, the project opens in
+ * the background and every call names it, so two agents hand off at once and neither touches the other's project or the
+ * window. Against an older Takt the project shows in the window and the calls act on it there (with the lock held).
+ */
+async function openProject(api, name, { create = true, background }) {
+  const opened = await api('project/open', { name, create, ...(background ? { focus: false } : {}) })
+  if (!background) return { ...opened, api }
+  const projectId = opened.projectId ?? opened.project?.id
+  if (!projectId) throw new Error(`Takt project/open gave no projectId for "${name}"`)
+  return { ...opened, api: (route, body) => api(route, body === undefined || route === 'project/open' ? body : { ...body, projectId }) }
+}
+
+/**
+ * The older rule, for a Takt before API version 5: its API works on the project open in its window, so two agents handing
+ * off at once would put one take's footage, graphics and render in the other's project. Every conversation with such a
+ * Takt holds its lock (one per Takt, under ~/Movies/Takt QA/.locks) from opening the project to the last call; the others
+ * wait their turn. Recording never waits. A holder whose process is gone, or that has held it longer than any real
+ * hand-off, is pushed out. A Takt that keeps the line itself takes no lock.
  */
 async function holdingTakt(ep, label, log, work, { maxHoldMs = 40 * 60_000, maxWaitMs = 4 * 60 * 60_000 } = {}) {
+  const background = await taktQueues(client(ep))
+  if (background) return work(true)
   const dir = join(homedir(), 'Movies', 'Takt QA', '.locks')
   mkdirSync(dir, { recursive: true })
-  const lock = join(dir, `takt-${createHash('sha1').update(ep.file).digest('hex').slice(0, 12)}`)
+  const lock = lockDir(ep)
   const ownerFile = join(lock, 'owner.json')
   const me = { pid: process.pid, label, since: new Date().toISOString() }
   let said = ''
@@ -133,12 +175,16 @@ export async function send(bundle, { taktHome, render = true, tighten = true, lo
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
   const ep = endpoint({ taktHome })
   const name = projectName(events)
-  return holdingTakt(ep, name, log, () => handOff(bundle, events, client(ep), name, { render, tighten, log }))
+  return holdingTakt(ep, name, log, async (background = false) => {
+    const handoff = await handOff(bundle, events, client(ep), name, { render, tighten, log, background })
+    if (background) await showInWindow(ep, client(ep), name, log)
+    return handoff
+  })
 }
 
-async function handOff(bundle, events, api, name, { render, tighten = true, log }) {
-  const { project, created } = await api('project/open', { name })
-  log(`${created ? 'Made' : 'Opened'} the Takt project "${project.name}"`)
+async function handOff(bundle, events, window, name, { render, tighten = true, log, background = false }) {
+  const { project, created, api } = await openProject(window, name, { background })
+  log(`${created ? 'Made' : 'Opened'} the Takt project "${project.name}"${background ? ' in the background' : ''}`)
 
   const screen = join(bundle, 'screen.mp4')
   const imported = await api('footage/import', { paths: [screen], replace: true })
@@ -289,10 +335,19 @@ async function waitForWords(api, log, timeoutMs = 240_000) {
 
 async function waitForRender(api, jobId, log, timeoutMs = 20 * 60_000) {
   let shown = -1
-  for (const end = Date.now() + timeoutMs; Date.now() < end; await sleep(2000)) {
+  let said = ''
+  for (let end = Date.now() + timeoutMs; Date.now() < end; await sleep(2000)) {
     const { job } = await api('render/status', { jobId })
     if (job.state === 'done') return job.outputPath
     if (job.state === 'failed' || job.state === 'cancelled') throw new Error(`Takt's render ${job.state}: ${job.error ?? job.message ?? ''}`)
+    if (job.state === 'queued') {
+      // Other renders are ahead in Takt's line: the 20 minutes count from when this one starts.
+      end = Date.now() + timeoutMs
+      const line = `Waiting in Takt's render line, place ${job.queuePosition ?? '?'}${job.estimatedStartAt ? ` (starts about ${new Date(job.estimatedStartAt).toLocaleTimeString('en-US')})` : ''}`
+      if (line !== said) log(line)
+      said = line
+      continue
+    }
     const pct = Math.floor(job.progress * 10) * 10
     if (pct !== shown) log(`Rendering ${pct}%`)
     shown = pct
@@ -304,11 +359,11 @@ async function waitForRender(api, jobId, log, timeoutMs = 20 * 60_000) {
 export async function notes(bundle, { taktHome, all = false } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
   const ep = endpoint({ taktHome })
-  return holdingTakt(ep, projectName(events), console.error, () => readNotes(bundle, events, client(ep), all))
+  return holdingTakt(ep, projectName(events), console.error, (background = false) => readNotes(bundle, events, client(ep), all, background))
 }
 
-async function readNotes(bundle, events, api, all) {
-  await api('project/open', { name: projectName(events), create: false })
+async function readNotes(bundle, events, window, all, background = false) {
+  const { api } = await openProject(window, projectName(events), { create: false, background })
   const { notes: list } = await api('notes/list', { all })
   const out = []
   for (const note of list) {
@@ -358,9 +413,8 @@ function placeOn(events, ms, marks = []) {
 export async function noteDone(bundle, noteId, summary, { taktHome } = {}) {
   const events = JSON.parse(readFileSync(join(bundle, 'events.json'), 'utf8'))
   const ep = endpoint({ taktHome })
-  const api = client(ep)
-  return holdingTakt(ep, projectName(events), console.error, async () => {
-    await api('project/open', { name: projectName(events), create: false })
+  return holdingTakt(ep, projectName(events), console.error, async (background = false) => {
+    const { api } = await openProject(client(ep), projectName(events), { create: false, background })
     return api('note/done', { noteId, summary })
   })
 }

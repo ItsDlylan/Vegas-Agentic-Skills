@@ -142,11 +142,18 @@ splitting a tightened timeline into a piece with no frames. Send it again with t
 
 ## Several agents at once
 
-Takt's API works on the project open in its window, so hand-offs to one Takt go one at a time: `run` (its send part),
-`send`, `notes` and `note-done` take that Takt's lock (`~/Movies/Takt QA/.locks/`) and print "Waiting for Takt: it is
-handing off ..." while another take holds it. Recording never waits. A queue can outlast a 10-minute tool timeout, so
-when other agents are recording, start `run` in the background, or `record` now and `send <bundle>` later. Never
-delete the lock to jump the queue: a holder that crashed is pushed out by itself.
+Takt (API version 5 and later) keeps the line itself. `send`, `notes` and `note-done` open the take's project in the
+background and name it on every call, so several agents hand off at the same time. A render waits its turn in Takt's
+render line and `send` prints "Waiting in Takt's render line, place N" with the estimated start. The user sees the
+line under File → Queue… in Takt and can move a render to the front or take it out. A render they stopped or removed
+comes back `cancelled` with a message that says so: tell the user, do not send it again. When the hand-off is done,
+`send` shows the project in Takt's window.
+
+Against an older Takt the API works on the project open in its window, so hand-offs go one at a time: these commands
+take that Takt's lock (`~/Movies/Takt QA/.locks/`) and print "Waiting for Takt: it is handing off ..." while another
+take holds it. Recording never waits. A queue can outlast a 10-minute tool timeout, so when other agents are
+recording, start `run` in the background, or `record` now and `send <bundle>` later. Never delete the lock to jump the
+queue: a holder that crashed is pushed out by itself.
 
 ## Someone else's browser
 
